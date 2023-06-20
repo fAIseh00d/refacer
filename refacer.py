@@ -22,6 +22,7 @@ import re
 import subprocess
 import numpy as np
 from esrgan_onnx import ESRGAN
+from gfpgan_onnx import GFPGAN
 
 class RefacerMode(Enum):
      CPU, CUDA, COREML, TENSORRT = range(1, 5)
@@ -250,7 +251,13 @@ class Refacer:
             self.upscale_en = True
             model_path = osp.join('models_ESRGAN',self.upscaler_model)
             sess_upsk = rt.InferenceSession(model_path, self.sess_options, providers=self.providers)
-            self.esrgan_model = ESRGAN(sess_upsk)
+            if 'GFPGAN' in str(upscaler):
+                self.esrgan_model = GFPGAN(sess_upsk)
+                #print('\nGFPGAN upscaling.')
+            else:
+                self.esrgan_model = ESRGAN(sess_upsk)
+                #print('\nESRGAN upscaling.')        
+        #else: print('\nNot upscaling.')     
         
         self.__check_video_has_audio(video_path)
         output_video_path = os.path.join('out',Path(video_path).name)

@@ -69,9 +69,9 @@ origin = []
 destination = []
 thresholds = []
 upscaler = []
-models_ESRGAN = ['None']
-models_ESRGAN += [file for file in os.listdir('models_ESRGAN') if file.endswith('.onnx')]
-print(models_ESRGAN)
+upscaler_models = ['None']
+upscaler_models += [file for file in os.listdir('upscaler_models') if file.endswith('.onnx')]
+print(upscaler_models)
 
 with gr.Blocks() as demo:
     with gr.Row():
@@ -88,7 +88,7 @@ with gr.Blocks() as demo:
             with gr.Row():
                 thresholds.append(gr.Slider(label="Threshold",minimum=0.0,maximum=1.0,value=0.2))
     with gr.Row():
-        upscaler.append(gr.Radio(label="Upscaler", choices=models_ESRGAN, value=models_ESRGAN[0], interactive=True))
+        upscaler.append(gr.Radio(label="Face upscaler", choices=upscaler_models, value=upscaler_models[0], interactive=True))
     with gr.Row():
         button=gr.Button("Reface", variant="primary")
 

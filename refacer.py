@@ -156,7 +156,7 @@ class Refacer:
         return ret
 
     def paste_upscale(self, bgr_fake, M, img):
-        bgr_fake_upscaled, self.scale_factor = self.esrgan_model.get(bgr_fake)
+        bgr_fake_upscaled, self.scale_factor = self.face_upscaler_model.get(bgr_fake)
         M = M * self.scale_factor
         bgr_fake = cv2.resize(bgr_fake, (self.face_swapper_input_size*self.scale_factor, 
                                          self.face_swapper_input_size*self.scale_factor), interpolation = cv2.INTER_LINEAR )
@@ -246,16 +246,15 @@ class Refacer:
         
     def reface(self, video_path, faces, upscaler):
         self.upscale_en = False
-        self.upscaler_model=upscaler
         if upscaler != 'None': 
             self.upscale_en = True
-            model_path = osp.join('models_ESRGAN',self.upscaler_model)
+            model_path = osp.join('upscaler_models',upscaler)
             sess_upsk = rt.InferenceSession(model_path, self.sess_options, providers=self.providers)
             if 'GFPGAN' in str(upscaler):
-                self.esrgan_model = GFPGAN(sess_upsk)
+                self.face_upscaler_model = GFPGAN(sess_upsk)
                 #print('\nGFPGAN upscaling.')
             else:
-                self.esrgan_model = ESRGAN(sess_upsk)
+                self.face_upscaler_model = ESRGAN(sess_upsk)
                 #print('\nESRGAN upscaling.')        
         #else: print('\nNot upscaling.')     
         

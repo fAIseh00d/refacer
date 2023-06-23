@@ -23,7 +23,6 @@ import subprocess
 import numpy as np
 from esrgan_onnx import ESRGAN
 from gfpgan_onnx import GFPGAN
-from modnet_onnx import MODnet
 
 class RefacerMode(Enum):
      CPU, CUDA, COREML, TENSORRT = range(1, 5)
@@ -100,9 +99,6 @@ class Refacer:
         self.face_swapper_input_size = self.face_swapper.input_size[0]
         #print("INSwapper resolution = ",self.face_swapper_input_size)
 
-        model_path = 'modnet.onnx'
-        sess_MODnet = rt.InferenceSession(model_path, self.sess_options, providers=self.providers)
-        self.MODnet_model = MODnet(sess_MODnet)
 
 
     def prepare_faces(self, faces):
@@ -166,18 +162,8 @@ class Refacer:
         target_img = img
         IM = cv2.invertAffineTransform(M_scale)
 
-        ##MODnet matte extract
-        face_matte = self.MODnet_model.get(upsk_face)
-        #2 is a base amount of pixels to expand the mask by
-        dil_edg = 2*self.scale_factor 
-        ##Blacken, dilate and blur the edges of face_matte by dil_edg pixels
-        face_matte[:dil_edg,:] = face_matte[-dil_edg:,:] = face_matte[:,:dil_edg] = face_matte[:,-dil_edg:] = 0
-        kernel = np.ones((dil_edg,dil_edg),np.uint8)
-        face_matte = cv2.dilate(face_matte,kernel,iterations = 1)
-        face_matte = cv2.GaussianBlur(face_matte, (dil_edg+1,dil_edg+1), 0)
-        ##Transform face matte back to target_img
-        face_matte = cv2.warpAffine(face_matte, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
-
+        face_matte = np.full((target_img.shape[0],target_img.shape[1]), 255, dtype=np.uint8)
+        
         ##Generate white square sized as a upsk_face
         img_matte = np.full((upsk_face.shape[0],upsk_face.shape[1]), 255, dtype=np.uint8) 
         ##Transform white square back to target_img

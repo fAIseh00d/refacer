@@ -5,7 +5,6 @@ class GFPGAN:
     def __init__(self, session):
         self.session = session
         self.model_input = self.session.get_inputs()[0].name
-        self.model_output = self.session.get_outputs()[0].name
 
     def _pre_process(self, image_array):
         image_array = cv2.resize(image_array, (512, 512))
@@ -26,7 +25,7 @@ class GFPGAN:
         input_size = image_array.shape[1]
         image_array = self._pre_process(image_array)
         ort_inputs = {self.model_input: image_array}
-        result = self.session.run([self.model_output], ort_inputs)
+        result = self.session.run(None, ort_inputs)[0][0]
         result = self._post_process(result)
         scale_factor = int(result.shape[1] / input_size)
         return result, scale_factor

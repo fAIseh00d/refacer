@@ -23,6 +23,7 @@ import subprocess
 import numpy as np
 from esrgan_onnx import ESRGAN
 from gfpgan_onnx import GFPGAN
+from modnet_onnx import MODnet
 
 class RefacerMode(Enum):
      CPU, CUDA, COREML, TENSORRT = range(1, 5)
@@ -99,6 +100,10 @@ class Refacer:
         self.face_swapper_input_size = self.face_swapper.input_size[0]
         #print("INSwapper resolution = ",self.face_swapper_input_size)
 
+        model_path = 'modnet.onnx'
+        sess_MODnet = rt.InferenceSession(model_path, self.sess_options, providers=self.providers)
+        self.MODnet_model = MODnet(sess_MODnet)
+
 
     def prepare_faces(self, faces):
         self.replacement_faces=[]
@@ -156,68 +161,56 @@ class Refacer:
         return ret
 
     def paste_upscale(self, bgr_fake, M, img):
-        bgr_fake_upscaled, self.scale_factor = self.face_upscaler_model.get(bgr_fake)
-        M2 = M * self.scale_factor
+        upsk_face, self.scale_factor = self.face_upscaler_model.get(bgr_fake)
+        M_scale = M * self.scale_factor
         target_img = img
-        aimg = cv2.warpAffine(img, M, (self.face_swapper_input_size, 
-                                       self.face_swapper_input_size), borderValue=0.0)
-        fake_diff = bgr_fake.astype(np.float32) - aimg.astype(np.float32)
-        fake_diff = np.abs(fake_diff).mean(axis=2)
-        erode_border = 2*self.scale_factor
-        fake_diff[:erode_border,:] = 0
-        fake_diff[-erode_border:,:] = 0
-        fake_diff[:,:erode_border] = 0
-        fake_diff[:,-erode_border:] = 0
-        fake_diff = cv2.GaussianBlur(fake_diff, (erode_border*2+1,erode_border*2+1), 0)
-        fake_diff = cv2.resize(fake_diff, (self.face_swapper_input_size*self.scale_factor, 
-                                         self.face_swapper_input_size*self.scale_factor), interpolation = cv2.INTER_LINEAR )
-        IM = cv2.invertAffineTransform(M2)
-        img_white = np.full((bgr_fake_upscaled.shape[0],bgr_fake_upscaled.shape[1]), 255, dtype=np.float32)
-        bgr_fake = cv2.warpAffine(bgr_fake_upscaled, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
-        img_white = cv2.warpAffine(img_white, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
-        fake_diff = cv2.warpAffine(fake_diff, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
-        img_white[img_white>20] = 255
-        fthresh = 10
-        fake_diff[fake_diff<fthresh] = 0
-        fake_diff[fake_diff>=fthresh] = 255
-        img_mask = img_white
-        mask_h_inds, mask_w_inds = np.where(img_mask==255)
-        mask_h = np.max(mask_h_inds) - np.min(mask_h_inds)
+        IM = cv2.invertAffineTransform(M_scale)
+
+        ##MODnet matte extract
+        face_matte = self.MODnet_model.get(upsk_face)
+        #2 is a base amount of pixels to expand the mask by
+        dil_edg = 2*self.scale_factor 
+        ##Blacken, dilate and blur the edges of face_matte by dil_edg pixels
+        face_matte[:dil_edg,:] = face_matte[-dil_edg:,:] = face_matte[:,:dil_edg] = face_matte[:,-dil_edg:] = 0
+        kernel = np.ones((dil_edg,dil_edg),np.uint8)
+        face_matte = cv2.dilate(face_matte,kernel,iterations = 1)
+        face_matte = cv2.GaussianBlur(face_matte, (dil_edg+1,dil_edg+1), 0)
+        ##Transform face matte back to target_img
+        face_matte = cv2.warpAffine(face_matte, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
+
+        ##Generate white square sized as a upsk_face
+        img_matte = np.full((upsk_face.shape[0],upsk_face.shape[1]), 255, dtype=np.uint8) 
+        ##Transform white square back to target_img
+        img_matte = cv2.warpAffine(img_matte, IM, (target_img.shape[1], target_img.shape[0]), flags=cv2.INTER_NEAREST, borderValue=0.0) 
+        ##Blacken the edges of face_matte by 1 pixels (so the mask in not expanded on the image edges)
+        img_matte[:1,:] = img_matte[-1:,:] = img_matte[:,:1] = img_matte[:,-1:] = 0 
+        #Detect the affine transformed white area
+        mask_h_inds, mask_w_inds = np.where(img_matte==255) 
+        #Calculate the size (and diagonal size) of transformed white area width and height boundaries
+        mask_h = np.max(mask_h_inds) - np.min(mask_h_inds) 
         mask_w = np.max(mask_w_inds) - np.min(mask_w_inds)
         mask_size = int(np.sqrt(mask_h*mask_w))
-        k = max(mask_size//10, 10)
-        #k = max(mask_size//20, 6)
-        #k = 6
+        #Calculate the kernel size for eroding img_matte by kernel (insightface empirical guess for best size was max(mask_size//10,10))
+        k = max(mask_size//12, 8)
         kernel = np.ones((k,k),np.uint8)
-        img_mask = cv2.erode(img_mask,kernel,iterations = 1)
-        kernel = np.ones((erode_border,erode_border),np.uint8)
-        fake_diff = cv2.dilate(fake_diff,kernel,iterations = 1)
-        k1=k//4
-        img_mask[:k1,:] = 0
-        img_mask[-k1:,:] = 0
-        img_mask[:,:k1] = 0
-        img_mask[:,-k1:] = 0
-        fake_diff[:k1,:] = 0
-        fake_diff[-k1:,:] = 0
-        fake_diff[:,:k1] = 0
-        fake_diff[:,-k1:] = 0
-        k = max(mask_size//20, 5)
-        #k = 3
-        #k = 3
+        img_matte = cv2.erode(img_matte,kernel,iterations = 1)
+        #Calculate the kernel size for blurring img_matte by blur_size (insightface empirical guess for best size was max(mask_size//20, 5))
+        k = max(mask_size//24, 4) 
         kernel_size = (k, k)
         blur_size = tuple(2*i+1 for i in kernel_size)
-        img_mask = cv2.GaussianBlur(img_mask, blur_size, 0)
-        #k = 5
-        kernel_size = (k, k)
-        blur_size = tuple(2*i+1 for i in kernel_size)
-        fake_diff = cv2.GaussianBlur(fake_diff, blur_size, 0)
-        img_mask /= 255
-        fake_diff /= 255
-        img_mask = np.minimum(img_mask, fake_diff)
-        img_mask = np.reshape(img_mask, [img_mask.shape[0],img_mask.shape[1],1])
-        fake_merged = img_mask * bgr_fake + (1-img_mask) * target_img.astype(np.float32)
-        fake_merged = fake_merged.astype(np.uint8)
-        return fake_merged
+        img_matte = cv2.GaussianBlur(img_matte, blur_size, 0)
+        
+        #Normalize images to float values and reshape
+        img_matte = img_matte.astype(np.float32)/255
+        face_matte = face_matte.astype(np.float32)/255
+        img_matte = np.minimum(face_matte, img_matte)
+        img_matte = np.reshape(img_matte, [img_matte.shape[0],img_matte.shape[1],1]) 
+        ##Transform upcaled face back to target_img
+        paste_face = cv2.warpAffine(upsk_face, IM, (target_img.shape[1], target_img.shape[0]), borderMode=cv2.BORDER_REPLICATE) 
+        ##Re-assemble image
+        paste_face = img_matte * paste_face
+        paste_face = paste_face + (1-img_matte) * target_img.astype(np.float32) 
+        return paste_face.astype(np.uint8)
 
     def process_faces(self,frame):
         max_num=0

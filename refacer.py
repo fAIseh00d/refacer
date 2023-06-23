@@ -158,11 +158,9 @@ class Refacer:
     def paste_upscale(self, bgr_fake, M, img):
         bgr_fake_upscaled, self.scale_factor = self.face_upscaler_model.get(bgr_fake)
         M2 = M * self.scale_factor
-        bgr_fake = cv2.resize(bgr_fake, (self.face_swapper_input_size*self.scale_factor, 
-                                         self.face_swapper_input_size*self.scale_factor), interpolation = cv2.INTER_LINEAR )
         target_img = img
-        aimg = cv2.warpAffine(img, M2, (self.face_swapper_input_size*self.scale_factor, 
-                                       self.face_swapper_input_size*self.scale_factor), borderValue=0.0)
+        aimg = cv2.warpAffine(img, M, (self.face_swapper_input_size, 
+                                       self.face_swapper_input_size), borderValue=0.0)
         fake_diff = bgr_fake.astype(np.float32) - aimg.astype(np.float32)
         fake_diff = np.abs(fake_diff).mean(axis=2)
         erode_border = 2*self.scale_factor
@@ -170,9 +168,11 @@ class Refacer:
         fake_diff[-erode_border:,:] = 0
         fake_diff[:,:erode_border] = 0
         fake_diff[:,-erode_border:] = 0
-        fake_diff = cv2.GaussianBlur(fake_diff, (erode_border*8+1,erode_border*8+1), 0)
+        fake_diff = cv2.GaussianBlur(fake_diff, (erode_border*2+1,erode_border*2+1), 0)
+        fake_diff = cv2.resize(fake_diff, (self.face_swapper_input_size*self.scale_factor, 
+                                         self.face_swapper_input_size*self.scale_factor), interpolation = cv2.INTER_LINEAR )
         IM = cv2.invertAffineTransform(M2)
-        img_white = np.full((aimg.shape[0],aimg.shape[1]), 255, dtype=np.float32)
+        img_white = np.full((bgr_fake_upscaled.shape[0],bgr_fake_upscaled.shape[1]), 255, dtype=np.float32)
         bgr_fake = cv2.warpAffine(bgr_fake_upscaled, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
         img_white = cv2.warpAffine(img_white, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
         fake_diff = cv2.warpAffine(fake_diff, IM, (target_img.shape[1], target_img.shape[0]), borderValue=0.0)
